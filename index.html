@@ -32,14 +32,23 @@ import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, onSnapshot, ru
 // Cole aqui os dados do seu aplicativo Web do Firebase.
 // Firebase Console > Configurações do projeto > Seus apps > Web
 // ============================================================
-const firebaseConfig = {
-  apiKey: "COLE_SUA_API_KEY",
-  authDomain: "SEU_PROJETO.firebaseapp.com",
-  projectId: "SEU_PROJETO",
-  storageBucket: "SEU_PROJETO.firebasestorage.app",
-  messagingSenderId: "SEU_SENDER_ID",
-  appId: "SEU_APP_ID"
+const DEFAULT_FIREBASE_CONFIG = {
+  apiKey: "",
+  authDomain: "",
+  projectId: "",
+  storageBucket: "",
+  messagingSenderId: "",
+  appId: ""
 };
+let firebaseConfig = loadFirebaseConfig();
+function loadFirebaseConfig(){
+  try { return {...DEFAULT_FIREBASE_CONFIG, ...(JSON.parse(localStorage.getItem('perguntados_firebase_config')||'{}'))}; }
+  catch(e){ return {...DEFAULT_FIREBASE_CONFIG}; }
+}
+function saveFirebaseConfig(cfg){
+  firebaseConfig = {...DEFAULT_FIREBASE_CONFIG,...cfg};
+  localStorage.setItem('perguntados_firebase_config', JSON.stringify(firebaseConfig));
+}
 const APP_ID = "perguntados-board";
 
 const CATEGORIES = [
@@ -87,18 +96,53 @@ function uid(){return crypto.randomUUID?.()||Math.random().toString(36).slice(2)
 function roomRef(id){return doc(db,'artifacts',APP_ID,'public','data','rooms',id)}
 function newCode(){return Math.random().toString(36).slice(2,6).toUpperCase()}
 function emptyUsed(){return Object.fromEntries(CATEGORIES.map(c=>[c.id,[]]))}
-function validConfig(){return firebaseConfig && firebaseConfig.apiKey && !String(firebaseConfig.apiKey).startsWith('COLE_') && firebaseConfig.projectId && !String(firebaseConfig.projectId).startsWith('SEU_')}
+function validConfig(){return !!(firebaseConfig && firebaseConfig.apiKey && firebaseConfig.authDomain && firebaseConfig.projectId && firebaseConfig.appId)}
 function toast(msg,type='info'){const el=document.createElement('div');const bg=type==='error'?'bg-red-500':type==='success'?'bg-green-500':'bg-blue-500';el.className=`${bg} text-white px-4 py-3 rounded-xl shadow-lg flex items-center gap-2 transition-all`;el.innerHTML=`<i class="fas fa-${type==='error'?'exclamation-circle':type==='success'?'check-circle':'info-circle'}"></i><span>${esc(msg)}</span>`;toastContainer.appendChild(el);setTimeout(()=>{el.classList.add('opacity-0');setTimeout(()=>el.remove(),250)},3000)}
 function setView(v){STATE.view=v;render()}
 function updateHeader(){const labels={menu:'Menu Principal',online_menu:'Modo Online',create_room:'Criar Sala',join_room:'Entrar em Sala',lobby:`Lobby: ${STATE.room?.id||''}`,game:'Jogando',game_over:'Fim de Jogo'};document.getElementById('header-status').textContent=labels[STATE.view]||'Perguntados Board'}
 
+async function connectFirebase(){
+  try{
+    if(!validConfig()){firebaseReady=false;return false;}
+    if(window.__perguntadosFirebaseApp) return true;
+    const fb=initializeApp(firebaseConfig);
+    window.__perguntadosFirebaseApp=fb;
+    db=getFirestore(fb);
+    auth=getAuth(fb);
+    await signInAnonymously(auth);
+    STATE.user.id=auth.currentUser.uid;
+    firebaseReady=true;
+    return true;
+  }catch(e){
+    console.error(e);firebaseReady=false;STATE.user.id=uid();
+    toast('Não foi possível conectar ao Firebase: '+(e?.message||e),'error');
+    return false;
+  }
+}
+function openFirebaseSetup(){
+  const c=firebaseConfig||{};
+  modal.classList.remove('hidden');
+  modal.innerHTML=`<div class="bg-white w-full max-w-xl rounded-3xl shadow-2xl overflow-hidden">
+    <div class="bg-indigo-600 text-white p-6"><h2 class="text-2xl title-font">Configurar Firebase</h2><p class="text-sm opacity-90 mt-1">Cole os dados do aplicativo Web criado no Firebase Console.</p></div>
+    <div class="p-6 space-y-3">
+      ${[['apiKey','API Key'],['authDomain','Auth Domain'],['projectId','Project ID'],['storageBucket','Storage Bucket'],['messagingSenderId','Messaging Sender ID'],['appId','App ID']].map(([id,label])=>`<div><label class="block text-xs font-bold text-slate-600 mb-1">${label}</label><input id="fb-${id}" value="${esc(c[id]||'')}" class="w-full p-3 border-2 border-slate-200 rounded-xl outline-none focus:border-indigo-500" placeholder="${label}"></div>`).join('')}
+      <div class="bg-amber-50 border border-amber-200 rounded-xl p-3 text-xs text-amber-800"><b>Também ative:</b> Authentication → Sign-in method → Anonymous e crie o Cloud Firestore.</div>
+      <div class="flex gap-3 pt-2"><button id="fb-cancel" class="flex-1 py-3 bg-slate-200 rounded-xl font-bold">Cancelar</button><button id="fb-save" class="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-bold">Salvar e Testar</button></div>
+    </div></div>`;
+  document.getElementById('fb-cancel').onclick=()=>{modal.classList.add('hidden');modal.innerHTML='';};
+  document.getElementById('fb-save').onclick=async()=>{
+    const cfg={};['apiKey','authDomain','projectId','storageBucket','messagingSenderId','appId'].forEach(k=>cfg[k]=document.getElementById('fb-'+k).value.trim());
+    if(!cfg.apiKey||!cfg.authDomain||!cfg.projectId||!cfg.appId){toast('Preencha os campos principais do Firebase.','error');return;}
+    saveFirebaseConfig(cfg);
+    const ok=await connectFirebase();
+    modal.classList.add('hidden');modal.innerHTML='';
+    if(ok){toast('Firebase conectado com sucesso!','success');setView('online_menu');}else{render();}
+  };
+}
 async function init(){
- try{
-  if(validConfig()){
-   const fb=initializeApp(firebaseConfig);db=getFirestore(fb);auth=getAuth(fb);await signInAnonymously(auth);STATE.user.id=auth.currentUser.uid;firebaseReady=true;
-  }else{STATE.user.id=uid()}
- }catch(e){console.error(e);firebaseReady=false;STATE.user.id=uid();toast('Firebase não conectado. O modo offline continua disponível.','error')}
- render();
+  if(validConfig()) await connectFirebase();
+  else STATE.user.id=uid();
+  render();
 }
 
 async function createRoom(size,maxPlayers){
@@ -152,7 +196,7 @@ function render(){updateHeader();main.innerHTML=views[STATE.view]?.()||views.men
 function topBack(target){return `<button class="absolute top-4 left-4 text-slate-500 hover:text-slate-800" data-view="${target}"><i class="fas fa-arrow-left text-2xl"></i> Voltar</button>`}
 const views={
  menu:()=>`<div class="flex flex-col items-center justify-center h-full p-4 gap-6"><div class="text-center mb-5"><div class="flex justify-center gap-2 mb-4">${CATEGORIES.map(c=>`<div class="w-10 h-10 rounded-full ${c.colorClass} flex items-center justify-center text-xl shadow-lg"><i class="fas ${c.icon}"></i></div>`).join('')}</div><h2 class="text-4xl text-slate-800 title-font mb-2">Bem-vindo ao</h2><h1 class="text-6xl text-indigo-600 title-font drop-shadow-md">Perguntados</h1></div><div class="w-full max-w-sm space-y-4"><label class="block text-sm font-bold text-gray-700">Seu nome<input id="player-name-input" class="w-full mt-2 p-3 border-2 border-slate-300 rounded-xl outline-none text-center text-lg font-bold" value="${esc(STATE.user.name)}" placeholder="Digite seu nome"></label><button data-mode="online" class="w-full py-4 bg-gradient-to-r from-blue-500 to-indigo-600 text-white rounded-2xl text-xl font-bold shadow-lg"><i class="fas fa-globe mr-2"></i>Jogar Online</button><p class="text-xs text-center text-slate-500">Jogue com amigos em outros dispositivos</p><div class="my-3 text-center text-sm text-gray-400">OU</div><button data-mode="offline" class="w-full py-4 bg-gradient-to-r from-emerald-500 to-teal-600 text-white rounded-2xl text-xl font-bold shadow-lg"><i class="fas fa-users mr-2"></i>Jogar Offline</button><p class="text-xs text-center text-slate-500">Pass-and-play em um único dispositivo</p></div></div>`,
- online_menu:()=>`<div class="flex flex-col items-center justify-center h-full p-4 gap-6 relative">${topBack('menu')}<h2 class="text-3xl title-font text-slate-800">Modo Online</h2><div class="w-full max-w-md bg-white rounded-2xl shadow p-4 text-sm mb-2"><div class="font-bold mb-1">Status do servidor</div><div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full ${firebaseReady?'bg-green-500':'bg-red-500'}"></span>${firebaseReady?'Firebase conectado':'Firebase não configurado'}</div>${!firebaseReady?'<p class="text-xs text-slate-500 mt-2">Edite <b>firebase-config.js</b> com os dados do seu projeto Firebase.</p>':''}</div><div class="w-full max-w-sm space-y-5"><button data-view="create_room" class="w-full py-4 bg-purple-500 hover:bg-purple-600 text-white rounded-2xl text-xl font-bold shadow-lg">Criar Nova Sala</button><button data-view="join_room" class="w-full py-4 bg-pink-500 hover:bg-pink-600 text-white rounded-2xl text-xl font-bold shadow-lg">Entrar com Senha</button></div></div>`,
+ online_menu:()=>`<div class="flex flex-col items-center justify-center h-full p-4 gap-6 relative">${topBack('menu')}<h2 class="text-3xl title-font text-slate-800">Modo Online</h2><div class="w-full max-w-md bg-white rounded-2xl shadow p-4 text-sm mb-2"><div class="font-bold mb-1">Status do servidor</div><div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full ${firebaseReady?'bg-green-500':'bg-red-500'}"></span><span>${firebaseReady?'Firebase conectado':'Firebase não configurado'}</span></div>${firebaseReady?'<p class="text-xs text-slate-500 mt-2">Servidor pronto para criar e entrar em salas.</p>':'<p class="text-xs text-slate-500 mt-2">Configure seu projeto Firebase uma única vez neste navegador.</p>'}<button data-firebase-setup class="mt-3 w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl font-bold"><i class="fas fa-gear mr-2"></i>${firebaseReady?'Alterar configuração':'Configurar Firebase'}</button></div><div class="w-full max-w-sm space-y-5"><button data-view="create_room" class="w-full py-4 bg-purple-500 hover:bg-purple-600 text-white rounded-2xl text-xl font-bold shadow-lg">Criar Nova Sala</button><button data-view="join_room" class="w-full py-4 bg-pink-500 hover:bg-pink-600 text-white rounded-2xl text-xl font-bold shadow-lg">Entrar com Senha</button></div></div>`,
  create_room:()=>`<div class="flex flex-col items-center justify-center h-full p-4 relative">${topBack(STATE.mode==='online'?'online_menu':'menu')}<div class="bg-white p-8 rounded-3xl shadow-xl w-full max-w-md"><h2 class="text-2xl title-font text-center text-slate-800 mb-6">Configurar Jogo</h2><label class="block text-sm font-bold text-gray-700 mb-4">Tamanho do Tabuleiro<select id="board-size" class="w-full mt-2 p-3 border-2 border-slate-200 rounded-xl"><option value="20">20 Casas (Rápido)</option><option value="30" selected>30 Casas (Normal)</option><option value="40">40 Casas (Médio)</option><option value="50">50 Casas (Longo)</option><option value="60">60 Casas (Épico)</option></select></label><label class="block text-sm font-bold text-gray-700">Número de Jogadores<select id="max-players" class="w-full mt-2 p-3 border-2 border-slate-200 rounded-xl"><option value="2">2 Jogadores</option><option value="3">3 Jogadores</option><option value="4" selected>4 Jogadores</option><option value="5">5 Jogadores</option><option value="6">6 Jogadores</option></select></label>${STATE.mode==='offline'?'<div class="mt-4 pt-4 border-t"><div class="text-sm font-bold text-gray-700 mb-2">Nomes dos Jogadores</div><div id="offline-names-container" class="space-y-2"></div></div>':''}<button id="btn-create" class="w-full mt-6 py-4 bg-indigo-600 text-white rounded-xl text-lg font-bold shadow-md">Criar Sala</button></div></div>`,
  join_room:()=>`<div class="flex flex-col items-center justify-center h-full p-4 relative">${topBack('online_menu')}<div class="bg-white p-8 rounded-3xl shadow-xl w-full max-w-sm text-center"><h2 class="text-2xl title-font text-slate-800 mb-2">Entrar na Sala</h2><p class="text-slate-500 mb-6 text-sm">Digite a senha de 4 caracteres.</p><input id="room-code" maxlength="4" class="w-full p-4 text-center text-4xl font-bold tracking-widest border-2 border-slate-300 rounded-2xl mb-6 uppercase" placeholder="ABCD"><button id="btn-join" class="w-full py-4 bg-pink-500 text-white rounded-xl text-lg font-bold shadow-md">Entrar</button></div></div>`,
  lobby:()=>lobbyView(),game:()=>gameView(),game_over:()=>gameOverView()
@@ -164,6 +208,7 @@ function resultModal(){const ok=STATE.room.lastAnswerCorrect;return `<div class=
 function gameOverView(){const ps=[...STATE.room.players].sort((a,b)=>b.position-a.position||b.score-a.score),w=ps.find(p=>p.id===STATE.room.winnerId)||ps[0];return `<div class="flex flex-col items-center justify-center h-full p-4 overflow-y-auto"><div class="text-center mb-8"><i class="fas fa-trophy text-6xl text-yellow-400 mb-4"></i><h1 class="text-4xl title-font">Fim de Jogo!</h1><p class="text-xl text-slate-600 mt-2"><b>${esc(w.name)}</b> venceu!</p></div><div class="w-full max-w-lg bg-white p-6 rounded-3xl shadow-xl"><h2 class="text-xl font-bold text-slate-700 mb-4 border-b pb-2">Ranking Final</h2>${ps.map((p,i)=>`<div class="flex items-center justify-between p-4 ${i===0?'bg-yellow-50 ring-2 ring-yellow-400':'bg-slate-50'} rounded-xl mb-2"><div class="flex items-center gap-3"><div class="w-8 font-bold text-slate-400 text-xl">${i+1}º</div><div class="w-10 h-10 rounded-full peao-${p.color}"></div><div class="font-bold">${esc(p.name)}</div></div><div class="text-right"><div class="font-black text-indigo-600">${p.score} pts</div><div class="text-xs text-slate-500">Casa ${p.position}</div></div></div>`).join('')}<button data-leave class="w-full mt-4 py-4 bg-slate-800 text-white rounded-xl text-lg font-bold">Voltar ao Menu</button></div></div>`}
 
 function attach(){
+ const fbSetup=document.querySelector('[data-firebase-setup]'); if(fbSetup) fbSetup.onclick=openFirebaseSetup;
  const name=document.getElementById('player-name-input');if(name)name.onchange=()=>{STATE.user.name=name.value.trim()||'Jogador'};
  document.querySelectorAll('[data-mode]').forEach(b=>b.onclick=()=>{STATE.mode=b.dataset.mode;setView(b.dataset.mode==='online'?'online_menu':'create_room')});
  document.querySelectorAll('[data-view]').forEach(b=>b.onclick=()=>setView(b.dataset.view));
