@@ -30,20 +30,25 @@ import { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, onSnapshot, ru
 // ============================================================
 // CONFIGURAÇÃO FIREBASE
 // Cole aqui os dados do seu aplicativo Web do Firebase.
-// Firebase Console > Configurações do projeto > Seus apps > Web
+// Firebase Console > Configurações do projeto > Seus apps > Web\n// Projeto já configurado para: perguntados-board
 // ============================================================
 const DEFAULT_FIREBASE_CONFIG = {
-  apiKey: "",
-  authDomain: "",
-  projectId: "",
-  storageBucket: "",
-  messagingSenderId: "",
-  appId: ""
+  apiKey: "AIzaSyBG6wN4Xk-hu16gfLEDifGalopQOshxGE",
+  authDomain: "perguntados-board.firebaseapp.com",
+  projectId: "perguntados-board",
+  storageBucket: "perguntados-board.firebasestorage.app",
+  messagingSenderId: "294527320589",
+  appId: "1:294527320589:web:48d8395688732beb2cb44"
 };
 let firebaseConfig = loadFirebaseConfig();
 function loadFirebaseConfig(){
-  try { return {...DEFAULT_FIREBASE_CONFIG, ...(JSON.parse(localStorage.getItem('perguntados_firebase_config')||'{}'))}; }
-  catch(e){ return {...DEFAULT_FIREBASE_CONFIG}; }
+  try {
+    const saved=JSON.parse(localStorage.getItem('perguntados_firebase_config')||'null');
+    if(saved && saved.apiKey && saved.authDomain && saved.projectId && saved.appId){
+      return {...DEFAULT_FIREBASE_CONFIG,...saved};
+    }
+  } catch(e) {}
+  return {...DEFAULT_FIREBASE_CONFIG};
 }
 function saveFirebaseConfig(cfg){
   firebaseConfig = {...DEFAULT_FIREBASE_CONFIG,...cfg};
@@ -93,7 +98,7 @@ let db=null,auth=null,firebaseReady=false;
 
 function esc(v=''){return String(v).replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));}
 function uid(){return crypto.randomUUID?.()||Math.random().toString(36).slice(2)+Date.now().toString(36)}
-function roomRef(id){return doc(db,'artifacts',APP_ID,'public','data','rooms',id)}
+function roomRef(id){return doc(db,'rooms',id)}
 function newCode(){return Math.random().toString(36).slice(2,6).toUpperCase()}
 function emptyUsed(){return Object.fromEntries(CATEGORIES.map(c=>[c.id,[]]))}
 function validConfig(){return !!(firebaseConfig && firebaseConfig.apiKey && firebaseConfig.authDomain && firebaseConfig.projectId && firebaseConfig.appId)}
